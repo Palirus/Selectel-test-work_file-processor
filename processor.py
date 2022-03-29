@@ -1,5 +1,5 @@
 from distutils.command.upload import upload
-import os
+import os, subprocess
 import asyncio, multiprocessing, asyncssh, sys
 from shutil import ExecError
 from time import sleep
@@ -13,17 +13,16 @@ FILE_DIR='/app/files/'
 def init_db(db):
     db.run_query('''CREATE TABLE IF NOT EXISTS customer
             (ID INT PRIMARY KEY     NOT NULL,
-            COUNT           INT    NOT NULL); ''')
+            COUNT INT               NOT NULL); ''')
     r = db.run_query('''CREATE TABLE IF NOT EXISTS files
-            (ID INT PRIMARY KEY     NOT NULL,
-            name TEXT                NOT NULL,
-            LAST_ROW_PROCESSING           INT    NOT NULL); ''')
+            (NAME TEXT PRIMARY KEY     NOT NULL,
+            LAST_ROW_PROCESSING INT    DEFAULT 0); ''')
 
     r = db.run_query('''select 1''')
     print(r)
 
 db = Storage(config())
-# init_db(db)
+init_db(db)
 
 
 
@@ -62,26 +61,61 @@ async def run_client():
         #     contents = await f.read()
         # print(contents)
 
+# asyncssh.SSHClientConnection.run
+CHANKSIZE_LINE=4
 # try:
 #     asyncio.get_event_loop().run_until_complete(run_client())
 # except (OSError, asyncssh.Error) as exc:
 #     sys.exit('SSH connection failed: ' + str(exc))
-async def read_file(new_file):
-    print('\n worker got new_file:', new_file)
+async def read_file(name_file):
+    async def upload_data(end_line, data=None):
+        db.run_query("UPDATE files  SET LAST_ROW_PROCESSING=%s WHERE name=%s;", (end_line, name_file))
+
+    async def set_file_to_db():
+        res = db.run_query("SELECT * FROM files WHERE name = %s;", (name_file,))
+        print('res', res)
+        # if res is []:
+        db.run_query("INSERT INTO files VALUES (%s, 0);", (name_file,))
+            
+
+    print('\n worker got new_file:', name_file)
+
+    await set_file_to_db()
     async with asyncssh.connect('localhost', username="test", password="test", port=22, known_hosts=None) as conn:
-        async with conn.start_sftp_client() as sftp:
-            async with sftp.open(f'{FILE_DIR}{new_file}') as f:
+        # async with conn.start_sftp_client() as sftp:
+            # async with sftp.open(f'{FILE_DIR}{new_file}') as f:
+                start_line = 0
                 while True:
-                    # lines = await f.read(offset)
-                    lines = await f.read(4)
-                    last_read_row = await f.tell()
-                    data = await processing_lines(lines)
-                    # await upload_data(data, last_read_row)
-                    await asyncio.sleep(2)
+                    # async with conn.run("awk -F " " 'NR>0{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True) as awk:
+                        end_line = start_line + CHANKSIZE_LINE
+                        # try:
+                            # awk = await conn.run(f"awk -F \" \" 'NR>{start_line} && NR<{end_line}" + "{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True, timeout=None)
+                            # awk = await conn.run("awk -F ' ' 'NR>0{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True, timeout=None)
+                        # except asyncssh.ProcessError as e:
+                            # print('err', e)
+                            # print(awk.stderr)
+                        # data_lines = awk.stdout
+                        data_lines = await awk_read(conn, start_line, end_line)
+                        print(f'current_files: {data_lines}')
+                        data = await processing_lines(data_lines)
+                        await upload_data(end_line, data=None)
+                        start_line = end_line
+                        await asyncio.sleep(2)
+
+async def awk_read(conn, start_line, end_line):
+    try:
+        awk = await conn.run(f"awk -F \" \" 'NR>{start_line} && NR<{end_line}" + "{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True, timeout=None)
+        result = awk.stdout
+    except asyncssh.ProcessError as e:
+        print(f'ERROR: {e}')
+        print(awk.stderr)
+        result = None
+    finally:
+        return result
 
 async def processing_lines(lines):
     data = {}
-    lines = list(filter(None, lines.split('\n')))
+    lines = list(filter(None, lines.split('\n'))) # EMPTY STR
     for line in  lines:
         print(line)
         try:
@@ -92,10 +126,6 @@ async def processing_lines(lines):
     print(data, type(lines))
     return data
 
-# async def upload_data(data):
-#     db.run_query(f'''UPDATE IF NOT EXISTS files
-#             SET LAST_ROW_PROCESSING={number_count}
-#             WHERE name={name_file}; ''')
 
 async def worker(tasks):
     while True:

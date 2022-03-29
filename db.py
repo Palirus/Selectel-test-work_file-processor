@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import psycopg2
+from psycopg2 import OperationalError, errorcodes, errors, connect
 
 
 class Storage:
@@ -15,39 +15,33 @@ class Storage:
             if self.conn is not None:
                 self.conn.close()
             print('connecting to the PostgreSQL database...')
-            self.conn = psycopg2.connect(**self.config)
-        except Exception as error:
-            print(error)
-            raise
+            self.conn = connect(**self.config)
+            self.conn.autocommit = True
+        except OperationalError as err:
+            # pass exception to function
+            print(err)
 
-    def run_query(self, query: str):
-        def validate(query: str):
-            pass
-            # raise Exception('bad sql')
+            # set the connection to 'None' in case of error
+            conn = None
 
+
+    def run_query(self, query: str, param:list = ()):
         try:
-            self.ping()
-        except Exception:
-            self.connect()   
-
-        try:
-            validate(query)
-            with self.conn.cursor() as cursor:
-                self.conn.autocommit = True
-                cursor.execute(query)
-                record = cursor.fetchall()
-                return record
-        except psycopg2.DatabaseError as e:
-            print(e)
+            with self.conn as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, param)
+                    record = cursor.fetchall()
+                    return record
         except Exception as e:
             print(e)
-            raise
+
 
     def ping(self):
         try:
-            with self.conn.cursor() as cursor:
-                cursor.execute('SELECT version()')
-                # print(cursor.fetchall())
+            with self.conn:
+                with self.conn.cursor() as cursor:
+                    cursor.execute('SELECT version()')
+                    # print(cursor.fetchall())
         except Exception as e:
             print(e)
             print('Not set connection')
