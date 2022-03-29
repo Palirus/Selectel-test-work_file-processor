@@ -41,7 +41,7 @@ class Storage:
             with self.conn:
                 with self.conn.cursor() as cursor:
                     cursor.execute('SELECT version()')
-                    # print(cursor.fetchall())
+                    print(cursor.fetchall())
         except Exception as e:
             print(e)
             print('Not set connection')
@@ -52,7 +52,14 @@ if __name__ == '__main__':
     from config import config
 
     s =Storage(config())
-    # s.ping()
-    res = s.run_query('select 1')
-    print(res)
+
+    # with connect(**config()) as conn:
+    #     with conn.cursor() as cursor:
+    #         cursor.execute('SELECT version()')
+    #         print(cursor.fetchall())
+
+    s.connect()
+    s.ping()
+    # res = s.run_query('select 1')
+    # print(res)
 
