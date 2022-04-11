@@ -1,65 +1,136 @@
-#!/usr/bin/python
-from psycopg2 import OperationalError, errorcodes, errors, connect
+# from psycopg2 import OperationalError, errorcodes, errors, connect
+# from psycopg import OperationalError, errorcodes, errors
+import asyncio
+from psycopg_pool import ConnectionPool
 
-
-class Storage:
-
+class DataBase:
     def __init__(self, config) -> None:
-        self.conn = None
+        self.pool = None
         self.config = config
 
-
-    def connect(self):
+    async def connect_pool(self):
         """ connect to the PostgreSQL database server """
         try:
-            if self.conn is not None:
-                self.conn.close()
-            print('connecting to the PostgreSQL database...')
-            self.conn = connect(**self.config)
-            self.conn.autocommit = True
-        except OperationalError as err:
-            # pass exception to function
-            print(err)
+            if self.pool is not None:
+                self.pool.close()
+            print('connecting pool to the PostgreSQL database...')
+            self.pool = ConnectionPool("host= storage dbname=storage user=user password=password")
+        # except OperationalError as err:
+        except Exception as err:
+            print("Pool error:", err)
 
-            # set the connection to 'None' in case of error
-            conn = None
-
-
-    def run_query(self, query: str, param:list = ()):
+    async def run_query(self, query: str, param: tuple = ()):
         try:
-            with self.conn as conn:
-                with conn.cursor() as cursor:
-                    cursor.execute(query, param)
-                    record = cursor.fetchall()
-                    return record
+             with self.pool.connection() as coon:
+                cur = coon.execute(query, param)
+                coon.commit()
+                print(f"statusmessage: {cur.statusmessage}")
+                return cur
         except Exception as e:
             print(e)
 
-
-    def ping(self):
+    async def ping(self):
         try:
-            with self.conn:
-                with self.conn.cursor() as cursor:
-                    cursor.execute('SELECT version()')
-                    print(cursor.fetchall())
+            await self.connect_pool()
+            with self.pool.connection() as conn:
+                conn.autocommit =True
+                cur = conn.execute('SELECT version()')
+                print(cur.fetchall())
         except Exception as e:
-            print(e)
-            print('Not set connection')
+            print('Not set connection', e)
             raise
 
 
-if __name__ == '__main__':
+class Storage(DataBase):
+    def __init__(self, config) -> None:
+        super()
+        self.pool = None
+        self.config = config
+
+    async def get_file_in_db(self, file_name):
+        cursor = await self.run_query("SELECT * FROM files WHERE name = %s;", (file_name,))
+        return cursor.fetchall()
+    
+    async def set_file_in_db(self, file_name):
+        row = await self.get_file_in_db(file_name)
+        if not row:
+            await self.run_query("INSERT INTO files VALUES (%s, 0);", (file_name,))
+            print('Set file in db')
+        else:
+            return row
+
+    async def set_customer_in_db(self, id):
+        row = await self.get_file_in_db(id)
+        if not row:
+            await self.run_query("INSERT INTO customer VALUES (%s, 0);", (id,))
+            print('Set customer in db')
+        else:
+            return row
+
+    async def get_last_line_file(self,file_name):
+        try:
+            data = await self.get_file_in_db(file_name)
+            if data:
+                start_line = int(data[0][1])
+            else:
+                start_line = 0   
+            return start_line
+        except Exception as e:
+            print('Error parse last line of file from db:', e)
+
+    async def get_customer_in_db(self, id):
+        cursor = await self.run_query("SELECT * FROM customer WHERE id = %s;", (id,))
+        return cursor.fetchall()
+
+    async def upload_data(self, end_line, data=None, file_name=None):
+        # print(end_line, file_name)
+        try:
+            with self.pool.connection() as conn:
+                conn.execute('''UPDATE files SET LAST_ROW_PROCESSING= %s 
+                                WHERE name= %s;''', (end_line, file_name))
+                for id, count in data.items():
+                    await self.set_customer_in_db(id)
+                    conn.execute('''UPDATE customer SET COUNT=COUNT+%s
+                                    WHERE id=%s;''', (count, id))
+                conn.commit()
+                # print(cur.fetchall())
+        except Exception as e:
+            print('Send data is fail', e)
+            raise
+
+    async def init_db(self):
+        await self.run_query('''CREATE TABLE IF NOT EXISTS customer
+                (ID INT PRIMARY KEY     NOT NULL,
+                COUNT INT               NOT NULL); ''')
+        query = await self.run_query('''CREATE TABLE IF NOT EXISTS files
+                (NAME TEXT PRIMARY KEY     NOT NULL,
+                LAST_ROW_PROCESSING INT    DEFAULT 0); ''')
+        print(query.statusmessage)
+
+
+    
+
+
+async def main():
     from config import config
+    storage = Storage(config())
+    await storage.ping()
+    # await storage.init_db()
 
-    s =Storage(config())
+    # await storage.connect_pool()
+    # with storage.pool.connection() as coon:
+    #     coon.autocommit =True
+    #     cur = coon.execute("Select %s;", (json.dumps({'3': '9', '4': '5'}),))
+    #     print(cur.fetchall())
 
-    # with connect(**config()) as conn:
-    #     with conn.cursor() as cursor:
-    #         cursor.execute('SELECT version()')
-    #         print(cursor.fetchall())
+    # res = await storage.run_query("Select %s;", (json.dumps({'3': '9', '4': '5'}),))
+# (json.dumps({'3': '9', '4': '5'}),))
 
-    s.connect()
-    s.ping()
-    # res = s.run_query('select 1')
-    # print(res)
+    # print(res.fetchall())
+    # await storage.run_query("INSERT INTO files VALUES (%s, 0);", ('sd',))
+
+    # await storage.upload_data(3, {'3': '9', '4': '5'}, 'test1.txt')
+
+if __name__ == '__main__':
+    asyncio.run(main())
 

@@ -1,28 +1,19 @@
+from curses import noecho
 from distutils.command.upload import upload
 import os, subprocess
 import asyncio, multiprocessing, asyncssh, sys
+from turtle import end_fill
 from shutil import ExecError
 from time import sleep
 
-from db import Storage
+from db import Storage, DataBase
+from workers import read_worker, send_worker, assigner
 from config import config
 
 FILE_DIR='/app/files/'
 
-# db.ping()
-def init_db(db):
-    db.run_query('''CREATE TABLE IF NOT EXISTS customer
-            (ID INT PRIMARY KEY     NOT NULL,
-            COUNT INT               NOT NULL); ''')
-    r = db.run_query('''CREATE TABLE IF NOT EXISTS files
-            (NAME TEXT PRIMARY KEY     NOT NULL,
-            LAST_ROW_PROCESSING INT    DEFAULT 0); ''')
+# storage.ping()
 
-    r = db.run_query('''select 1''')
-    print(r)
-
-db = Storage(config())
-init_db(db)
 
 
 
@@ -67,102 +58,104 @@ CHANKSIZE_LINE=4
 #     asyncio.get_event_loop().run_until_complete(run_client())
 # except (OSError, asyncssh.Error) as exc:
 #     sys.exit('SSH connection failed: ' + str(exc))
-async def read_file(name_file):
-    async def upload_data(end_line, data=None):
-        db.run_query("UPDATE files  SET LAST_ROW_PROCESSING=%s WHERE name=%s;", (end_line, name_file))
-
-    async def set_file_to_db():
-        res = db.run_query("SELECT * FROM files WHERE name = %s;", (name_file,))
-        print('res', res)
-        # if res is []:
-        db.run_query("INSERT INTO files VALUES (%s, 0);", (name_file,))
+async def processing_file(file_name, storage, send_data):
+    async def check_writing_file():
+        data = await storage.set_file_in_db()
+        if data:
+            start_line = int(data[0][1])
+        else:
+            start_line = 0
+        awk = await conn.run(f"awk -F \" \" 'NR>{start_line} && NR<{start_line + CHANKSIZE_LINE}" + "{arr[$1]+=$2}END{for (a in arr) print a, arr[a], NR}' /app/files/test1.txt", check=True, timeout=None)
+        print(f"awk: {awk}")
+        if not awk.stdout:
+            return False
+        else:
+            return True
             
-
-    print('\n worker got new_file:', name_file)
-
-    await set_file_to_db()
+    # MAIN
+    await storage.set_file_in_db(file_name)
+    start_line = await storage.get_last_line_file(file_name)
+    print(f'\n worker start processing "{file_name}" at {start_line} line')
     async with asyncssh.connect('localhost', username="test", password="test", port=22, known_hosts=None) as conn:
-        # async with conn.start_sftp_client() as sftp:
-            # async with sftp.open(f'{FILE_DIR}{new_file}') as f:
-                start_line = 0
-                while True:
-                    # async with conn.run("awk -F " " 'NR>0{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True) as awk:
-                        end_line = start_line + CHANKSIZE_LINE
-                        # try:
-                            # awk = await conn.run(f"awk -F \" \" 'NR>{start_line} && NR<{end_line}" + "{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True, timeout=None)
-                            # awk = await conn.run("awk -F ' ' 'NR>0{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True, timeout=None)
-                        # except asyncssh.ProcessError as e:
-                            # print('err', e)
-                            # print(awk.stderr)
-                        # data_lines = awk.stdout
-                        data_lines = await awk_read(conn, start_line, end_line)
-                        print(f'current_files: {data_lines}')
-                        data = await processing_lines(data_lines)
-                        await upload_data(end_line, data=None)
-                        start_line = end_line
-                        await asyncio.sleep(2)
+        while True:
+            last_line_processing = await storage.get_last_line_file(file_name)
+            try:
+                data, end_line = await processing_lines(conn, file_name, last_line_processing, CHANKSIZE_LINE)
+                if data:
+                    await send_data.put({file_name:(data, end_line)})
+            except Exception as e:
+                print('no write in the file', e)
+            await asyncio.sleep(2)
 
-async def awk_read(conn, start_line, end_line):
+
+
+async def awk_read(conn, file_name, start_line, CHANKSIZE_LINE):
     try:
-        awk = await conn.run(f"awk -F \" \" 'NR>{start_line} && NR<{end_line}" + "{arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' /app/files/test1.txt", check=True, timeout=None)
+        # awk -F " " 'NR>0 && NR<100 {arr[$1]+=$2}END{for (a in arr) print a, arr[a]}' files/test1.txt
+        command = f"awk -F \" \" 'NR>{start_line} && NR<={start_line+CHANKSIZE_LINE}" + "{arr[$1]+=$2}END{for (a in arr) print a, arr[a], NR}'" + f" {FILE_DIR}{file_name}"
+        # print(f"command: {command}")
+        awk = await conn.run(f"awk -F \" \" 'NR>{start_line} && NR<={start_line+CHANKSIZE_LINE}" + "{arr[$1]+=$2}END{for (a in arr) print a, arr[a], NR}'" + f" {FILE_DIR}{file_name}", check=True, timeout=None)
+        # print('awk_read', awk)
         result = awk.stdout
     except asyncssh.ProcessError as e:
-        print(f'ERROR: {e}')
+        print(f'ERROR awk_read: {e}')
         print(awk.stderr)
         result = None
+        raise
     finally:
         return result
 
-async def processing_lines(lines):
+async def processing_lines(conn, file_name, last_line_processing: int, CHANKSIZE_LINE: int):
+    def get_end_line(EOF_line: int):
+        interval_lines = last_line_processing + CHANKSIZE_LINE
+        end_line = interval_lines if (EOF_line > interval_lines) else EOF_line
+        return end_line
+    
     data = {}
-    lines = list(filter(None, lines.split('\n'))) # EMPTY STR
-    for line in  lines:
-        print(line)
+    agg_lines = await awk_read(conn, file_name, last_line_processing, CHANKSIZE_LINE)
+    if agg_lines is None:
+        raise ReadFileException
+
+    lines_list = list(filter(None, agg_lines.split('\n'))) # EMPTY STR
+    print(f'last_line_processing: {last_line_processing},\n lines_list: {lines_list}')
+    EOF_line=0
+    for line in lines_list:
         try:
-            id, resourse = line.split(' ')
+            id, resourse, EOF_line = line.split(' ')
+            data.update({id:resourse})
         except Exception as e:
-            print(e)
-        data.update({id:resourse})
-    print(data, type(lines))
-    return data
+            print("ParseFileException", e)
+            raise ParseFileException
+        print('EOF_line', EOF_line)
+    end_line = get_end_line(int(EOF_line))
+    return data, end_line
 
 
-async def worker(tasks):
-    while True:
-        new_file = await tasks.get()
-        await read_file(new_file)
-        # await results.put(result)   
+class ReadFileException(Exception):
+    def __init__(self, message: str = "Error reading file") -> None:
+        self.message = message
+        super().__init__(self.message)
 
-async def assigner(task):
-    async with asyncssh.connect('localhost', username="test", password="test", port=22, known_hosts=None) as conn:
-        files = []
-        while True:
-            await asyncio.sleep(2)
-            current_files = await conn.run('ls /app/files', check=True)
-            current_files = list(filter(None, str(current_files.stdout).split('\n')))
-            # print(current_files.stdout, end='')
-            # print(current_files, end='') 
-            if set(files) != set(current_files):
-                added_files = list(set(current_files) - set(files))
-                deleted_files = list(set(files) - set(current_files))
-                # print(set(files) != set(current_files), set(current_files) ^ set(files), 'current_files', current_files, '\nfiles', files, '\nnew_files:', new_files, end='') 
-                files = current_files
-                for file in added_files:
-                    await task.put(file)
-                for file in deleted_files:
-                    print(f"deleted files {file}")
-                # await task.put(new_files)
-            # except:
-            #     print('errrr')
-            #     await asyncio.sleep(2)
-
+class ParseFileException(Exception):
+    def __init__(self, message: str = "Error parse file") -> None:
+        self.message = message
+        super().__init__(self.message)
+    
 
 
 async def main(pool_size):
-    tasks = asyncio.Queue(100)
-    workers = [asyncio.create_task(worker(tasks))
-               for _ in range(pool_size)]
-    await asyncio.gather(assigner(tasks), *workers)
+    storage = Storage(config())
+    await storage.connect_pool()
+    # await init_storage(storage)
+
+
+    queue_files = asyncio.Queue(10)
+    send_data = asyncio.Queue(1000)
+    read_workers = [asyncio.create_task(read_worker(queue_files, processing_file, send_data, storage))
+                        for _ in range(pool_size)]
+    send_workers = [asyncio.create_task(send_worker(send_data, storage))
+                        for _ in range(pool_size)]
+    await asyncio.gather(assigner(queue_files), *read_workers, *send_workers)
 
 if __name__ == '__main__':
     POOL_SIZE = 50
