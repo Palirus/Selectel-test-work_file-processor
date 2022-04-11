@@ -1,16 +1,15 @@
-# from psycopg2 import OperationalError, errorcodes, errors, connect
-# from psycopg import OperationalError, errorcodes, errors
 import asyncio
+from typing import Any
+from psycopg import OperationalError, cursor
 from psycopg_pool import ConnectionPool
 
 
 class DataBase:
-    def __init__(self, config) -> None:
+    def __init__(self, config: dict) -> None:
         self.pool = None
         self.config = config
 
     async def connect_pool(self):
-        """connect to the PostgreSQL database server"""
         try:
             if self.pool is not None:
                 self.pool.close()
@@ -18,16 +17,15 @@ class DataBase:
             self.pool = ConnectionPool(
                 "host= storage dbname=storage user=user password=password"
             )
-        # except OperationalError as err:
-        except Exception as err:
+        except OperationalError as err:
             print("Pool error:", err)
 
-    async def run_query(self, query: str, param: tuple = ()):
+    async def run_query(self, query: str, param: tuple = ()) -> cursor:
         try:
             with self.pool.connection() as coon:
                 cur = coon.execute(query, param)
                 coon.commit()
-                print(f"statusmessage: {cur.statusmessage}")
+                # print(f"statusmessage: {cur.statusmessage}")
                 return cur
         except Exception as e:
             print(e)
@@ -45,34 +43,30 @@ class DataBase:
 
 
 class Storage(DataBase):
-    def __init__(self, config) -> None:
+    def __init__(self, config: dict) -> None:
         super()
         self.pool = None
         self.config = config
 
-    async def get_file_in_db(self, file_name):
+    async def get_file_in_db(self, file_name) -> list[tuple[Any, ...]]:
         cursor = await self.run_query(
             "SELECT * FROM files WHERE name = %s;", (file_name,)
         )
         return cursor.fetchall()
 
-    async def set_file_in_db(self, file_name):
+    async def set_file_in_db(self, file_name) -> None:
         row = await self.get_file_in_db(file_name)
         if not row:
             await self.run_query("INSERT INTO files VALUES (%s, 0);", (file_name,))
             print("Set file in db")
-        else:
-            return row
 
-    async def set_customer_in_db(self, id):
+    async def set_customer_in_db(self, id: int) -> int:
         row = await self.get_file_in_db(id)
         if not row:
             await self.run_query("INSERT INTO customer VALUES (%s, 0);", (id,))
-            print("Set customer in db")
-        else:
-            return row
+            print(f"Set with id:{id} customer in db")
 
-    async def get_last_line_file(self, file_name):
+    async def get_last_line_file(self, file_name: str) -> int:
         try:
             data = await self.get_file_in_db(file_name)
             if data:
@@ -83,11 +77,11 @@ class Storage(DataBase):
         except Exception as e:
             print("Error parse last line of file from db:", e)
 
-    async def get_customer_in_db(self, id):
+    async def get_customer_in_db(self, id: int) -> list[tuple[Any, ...]]:
         cursor = await self.run_query("SELECT * FROM customer WHERE id = %s;", (id,))
         return cursor.fetchall()
 
-    async def upload_data(self, end_line, data=None, file_name=None):
+    async def upload_data(self, end_line, data=None, file_name=None) -> None:
         try:
             with self.pool.connection() as conn:
                 conn.execute(
@@ -107,7 +101,7 @@ class Storage(DataBase):
             print("Send data is fail", e)
             raise
 
-    async def init_db(self):
+    async def init_db(self) -> None:
         await self.run_query(
             """CREATE TABLE IF NOT EXISTS customer
                 (ID INT PRIMARY KEY     NOT NULL,

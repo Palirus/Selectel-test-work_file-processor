@@ -1,14 +1,16 @@
 import asyncio, asyncssh
+from queue import Queue
 
 from db import Storage
+from Error import EmptyReadFileException, ParseFileException
 from workers import read_worker, send_worker, assigner
 from config import config
 
 
-async def processing_file(file_name, storage, send_data):
+async def processing_file(file_name: str, storage: Storage, send_data: Queue) -> None:
     await storage.set_file_in_db(file_name)
     start_line = await storage.get_last_line_file(file_name)
-    print(f'\n worker start processing "{file_name}" at {start_line} line')
+    print(f'\n Worker started processing the file "{file_name}" from the line numbered {start_line}')
     async with asyncssh.connect(
         "localhost", username="test", password="test", port=22, known_hosts=None
     ) as conn:
@@ -25,7 +27,7 @@ async def processing_file(file_name, storage, send_data):
             await asyncio.sleep(2)
 
 
-async def awk_read(conn, file_name, start_line, CHANKSIZE_LINE):
+async def awk_read(conn, file_name: str, start_line: int, CHANKSIZE_LINE: int) -> str:
     try:
         command = (
             f'awk -F " " \'NR>{start_line} && NR<={start_line+CHANKSIZE_LINE}'
@@ -35,7 +37,8 @@ async def awk_read(conn, file_name, start_line, CHANKSIZE_LINE):
 
         awk = await conn.run(command, check=True, timeout=None)
         result = awk.stdout
-        print(awk)
+        print(result)
+        # print(awk)
     except asyncssh.ProcessError as e:
         print(f"ERROR awk_read: {e}")
         print(awk.stderr)
@@ -44,10 +47,8 @@ async def awk_read(conn, file_name, start_line, CHANKSIZE_LINE):
     return result
 
 
-async def processing_lines(
-    conn, file_name, last_line_processing: int, CHANKSIZE_LINE: int
-):
-    def get_end_line(EOF_line: int):
+async def processing_lines(conn, file_name, last_line_processing: int, CHANKSIZE_LINE: int) -> tuple[dict, int]:
+    def get_end_line(EOF_line: int) -> int:
         interval_lines = last_line_processing + CHANKSIZE_LINE
         end_line = interval_lines if (EOF_line > interval_lines) else EOF_line
         return end_line
@@ -72,18 +73,6 @@ async def processing_lines(
     return data, end_line
 
 
-class EmptyReadFileException(Exception):
-    def __init__(self, message: str = "File is not writiing") -> None:
-        self.message = message
-        super().__init__(self.message)
-
-
-class ParseFileException(Exception):
-    def __init__(self, message: str = "Error parse file") -> None:
-        self.message = message
-        super().__init__(self.message)
-
-
 async def main(pool_size):
     storage = Storage(config())
     await storage.connect_pool()
@@ -97,10 +86,8 @@ async def main(pool_size):
         )
         for _ in range(pool_size)
     ]
-    send_workers = [
-        asyncio.create_task(send_worker(send_data, storage)) for _ in range(pool_size)
-    ]
-    await asyncio.gather(assigner(queue_files), *read_workers, *send_workers)
+    send_workers = [asyncio.create_task(send_worker(send_data, storage)) for _ in range(pool_size)]
+    await asyncio.gather(assigner(queue_files, FILE_DIR), *read_workers, *send_workers)
 
 
 if __name__ == "__main__":

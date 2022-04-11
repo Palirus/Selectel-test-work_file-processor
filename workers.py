@@ -1,7 +1,8 @@
 import asyncio, asyncssh
+from queue import Queue
 
 
-async def read_worker(queue_files, processing_file, send_data, storage):
+async def read_worker(queue_files: Queue, processing_file: object, send_data: Queue, storage) -> None:
     while True:
         try:
             file_name = await queue_files.get()
@@ -9,8 +10,7 @@ async def read_worker(queue_files, processing_file, send_data, storage):
         except Exception as e:
             print("Error when read file", e)
 
-
-async def send_worker(send_data, storage):
+async def send_worker(send_data: Queue, storage) -> None:
     while True:
         message = await send_data.get()
         file_name = list(message.keys()).pop()
@@ -20,24 +20,18 @@ async def send_worker(send_data, storage):
         await storage.upload_data(end_line, file_name=file_name, data=data)
         await asyncio.sleep(2)
 
-
-async def assigner(task, file_path="/app/files"):
-    async with asyncssh.connect(
-        "localhost", username="test", password="test", port=22, known_hosts=None
-    ) as conn:
+async def assigner(queue_files: Queue, file_path='/') -> None:
+    async with asyncssh.connect( "localhost", username="test", password="test", port=22, known_hosts=None) as conn:
         files = []
         while True:
-            await asyncio.sleep(2)
-            current_files = await conn.run("ls /app/files", check=True)
+            current_files = await conn.run("ls {}".format(file_path), check=True)
             current_files = list(filter(None, str(current_files.stdout).split("\n")))
-            # print(current_files.stdout, end='')
-            # print(current_files, end='')
             if set(files) != set(current_files):
                 added_files = list(set(current_files) - set(files))
                 deleted_files = list(set(files) - set(current_files))
-                # print(set(files) != set(current_files), set(current_files) ^ set(files), 'current_files', current_files, '\nfiles', files, '\nnew_files:', new_files, end='')
                 files = current_files
                 for file in added_files:
-                    await task.put(file)
+                    await queue_files.put(file)
                 for file in deleted_files:
                     print(f"deleted files {file}")
+            await asyncio.sleep(2)
