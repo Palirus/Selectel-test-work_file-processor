@@ -1,18 +1,37 @@
-from configparser import ConfigParser
+from dataclasses import astuple, dataclass, field, asdict
+from typing import List, Dict, Text, Union, Optional
 
 
-def config(filename="database.ini", section="postgresql") -> dict:
-    parser = ConfigParser()
-    parser.read(filename)
-    db = {}
+class AbstractBaseClass:
+    pass
 
-    if parser.has_section(section):
-        params = parser.items(section)
-        for param in params:
-            db[param[0]] = param[1]
-    else:
-        raise Exception(
-            "Section {0} not found in the {1} file".format(section, filename)
-        )
+@dataclass
+class Postgresql(AbstractBaseClass):
+    host: Text
+    dbname: Text
+    user: Text
+    password: Text
 
-    return db
+    def __iter__(self):
+        return iter(asdict(self))
+
+
+@dataclass
+class SSH:
+    host: Text
+    port: int
+    username: Text
+    password: Text
+    known_hosts: Optional[bool]
+
+    def __iter__(self):
+        return iter(asdict(self))
+
+
+@dataclass
+class Config:
+    postgresql: Postgresql
+    ssh: Optional[SSH]
+
+    def __iter__(self):
+        return iter(asdict(self))

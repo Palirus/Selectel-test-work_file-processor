@@ -1,0 +1,13 @@
+postgresql {
+    host: storage
+    dbname: storage
+    user: user
+    password: password
+},
+ssh {
+    host: localhost
+    port: 22
+    username: test
+    password: test
+    known_hosts: None
+}

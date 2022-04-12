@@ -1,22 +1,21 @@
 import asyncio
+import configparser
 from typing import Any
 from psycopg import OperationalError, cursor
 from psycopg_pool import ConnectionPool
 
 
 class DataBase:
-    def __init__(self, config: dict) -> None:
+    def __init__(self, conninfo: dict) -> None:
         self.pool = None
-        self.config = config
+        self.conninfo = conninfo
 
     async def connect_pool(self):
         try:
             if self.pool is not None:
                 self.pool.close()
             print("connecting pool to the PostgreSQL database...")
-            self.pool = ConnectionPool(
-                "host= storage dbname=storage user=user password=password"
-            )
+            self.pool = ConnectionPool(self.conninfo)
         except OperationalError as err:
             print("Pool error:", err)
 
@@ -43,10 +42,10 @@ class DataBase:
 
 
 class Storage(DataBase):
-    def __init__(self, config: dict) -> None:
+    def __init__(self, conninfo: dict) -> None:
         super()
         self.pool = None
-        self.config = config
+        self.conninfo = conninfo
 
     async def get_file_in_db(self, file_name) -> list[tuple[Any, ...]]:
         cursor = await self.run_query(
@@ -116,9 +115,15 @@ class Storage(DataBase):
 
 
 async def main():
-    from config import config
+    from config import Config
+    import dataconf
+    from psycopg.conninfo import make_conninfo
 
-    storage = Storage(config())
+
+    conf = dataconf.file('config.hocon', Config)
+    conninfo = make_conninfo(**conf.postgresql.__dict__)
+
+    storage = Storage(conninfo)
     await storage.ping()
 
 

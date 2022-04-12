@@ -16,15 +16,15 @@ RUN apt-get update ; \
         openssh-server \
         openssh-client \
         vim \
+        tini \
     && ln -nfs /usr/share/zoneinfo/Europe/Moscow /etc/localtime \
     && echo Europe/Moscow > /etc/timezone \
     && pip install --upgrade pip \
-    && pip install -r requirements.txt 
-
-RUN mkdir /var/run/sshd && \
-chmod 0755 /var/run/sshd
+    && pip install -r requirements.txt
 
 RUN useradd -m -d /home/test -s /bin/bash -g root -G sudo -u 1001 test
 RUN echo "test:test" | chpasswd
 
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD /bin/sh -c "service ssh start && sleep infinity"
 EXPOSE 22
