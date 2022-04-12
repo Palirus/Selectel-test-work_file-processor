@@ -1,0 +1,55 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the README at:
+// https://github.com/microsoft/vscode-dev-containers/tree/v0.224.3/containers/docker-existing-docker-compose
+// If you want to run as a non-root user in the container, see .devcontainer/docker-compose.yml.
+{
+	"name": "Existing Docker Compose (Extend)",
+
+	// Update the 'dockerComposeFile' list if you have more compose files or use different names.
+	// The .devcontainer/docker-compose.yml file contains any overrides you need/want to make.
+	"dockerComposeFile": [
+		"../docker-compose.yml",
+		"docker-compose.yml"
+	],
+
+	// The 'service' property is the name of the service for the container that VS Code should
+	// use. Update this value and .devcontainer/docker-compose.yml to the real service name.
+	"service": "processor",
+
+	// The optional 'workspaceFolder' property is the path VS Code should open by default when
+	// connected. This is typically a file mount in .devcontainer/docker-compose.yml
+	"workspaceFolder": "/app",
+
+	// Add the IDs of extensions you want installed when the container is created.
+    "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "patbenatar.advanced-new-file",
+        "aaron-bond.better-comments",
+        "mhutchie.git-graph",
+        "mikestead.dotenv",
+        "editorconfig.editorconfig",
+        "rangav.vscode-thunder-client",
+        "njpwerner.autodocstring",
+        "shardulm94.trailing-spaces",
+        "esbenp.prettier-vscode"
+    ],
+
+    "settings": {
+        "python.pythonPath": "/usr/local/bin/python",
+        "python.linting.pylintEnabled": true,
+        "python.linting.pylintPath": "/usr/local/bin/pylint",
+        "python.linting.pylintArgs": [
+            "--disable=all",
+            "--enable=F,E,unreachable,duplicate-key,unnecessary-semicolon,global-variable-not-assigned,unused-variable,binary-op-exception,bad-format-string,anomalous-backslash-in-string,bad-open-mode",
+            "--load-plugins",
+            "pylint_flask_sqlalchemy"
+        ],
+        "python.linting.enabled": true,
+        "python.experiments.enabled": false,
+        "python.languageServer": "Pylance",
+        "autoDocstring.docstringFormat": "sphinx"
+    },
+
+	"postCreateCommand": "service ssh start",
+
+}

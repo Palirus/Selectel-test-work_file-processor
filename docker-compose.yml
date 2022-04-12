@@ -1,0 +1,31 @@
+version: '3.7'
+
+
+volumes:
+  pg_data:
+    driver: local
+
+
+services:
+
+  processor:
+    user: root
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+    - .:/app/
+
+  storage:
+    image: postgres:12.4-alpine
+    environment:
+      POSTGRES_DB: storage
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+    - pg_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer:latest
+    ports:
+    - 18091:8080
