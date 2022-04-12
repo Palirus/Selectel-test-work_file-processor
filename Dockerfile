@@ -17,6 +17,7 @@ RUN apt-get update ; \
         openssh-client \
         vim \
         tini \
+        htop \
     && ln -nfs /usr/share/zoneinfo/Europe/Moscow /etc/localtime \
     && echo Europe/Moscow > /etc/timezone \
     && pip install --upgrade pip \
